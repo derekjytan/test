@@ -1,0 +1,55 @@
+x-server: &server
+  image: ${COMPOSE_PROJECT_NAME:-ur-practical-2026}-server
+  environment: &server-environment
+    OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+    DATABASE_URL: postgresql://app:app@db:5432/chatbot
+  volumes: ["./server:/app"]
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: app
+      POSTGRES_DB: chatbot
+    ports: ["${DB_PORT:-5433}:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d chatbot"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  migrate:
+    <<: *server
+    build: ./server
+    pull_policy: build
+    command: ["python", "-m", "migrate"]
+    depends_on:
+      db: { condition: service_healthy }
+  api:
+    <<: *server
+    pull_policy: never
+    ports: ["${API_PORT:-8787}:8787"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  worker:
+    <<: *server
+    pull_policy: never
+    command: ["python", "-m", "worker"]
+    environment:
+      <<: *server-environment
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-5}
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+  web:
+    build: ./web
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    ports: ["${WEB_PORT:-5273}:5273"]
+    depends_on: [api]
+volumes:
+  pgdata:
